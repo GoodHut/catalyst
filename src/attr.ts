@@ -1,96 +1,85 @@
-import type {CustomElementClass} from './custom-element.js'
-import {dasherize} from './dasherize.js'
-import {meta} from './core.js'
+import type {Ability} from './ability.js'
+import {mustDasherize} from './dasherize.js'
+import {createMark} from './mark.js'
+import {requestUpdate, createAbility} from './ability.js'
+import {observeProperty} from './observe-property.js'
 
-const attrKey = 'attr'
-type attrValue = string | number | boolean
+const [attr, getAttrs] = createMark((key: PropertyKey) => mustDasherize(key, '@attr'))
+export {attr, getAttrs}
 
-/**
- * Attr is a decorator which tags a property as one to be initialized via
- * `initializeAttrs`.
- *
- * The signature is typed such that the property must be one of a String,
- * Number or Boolean. This matches the behavior of `initializeAttrs`.
- */
-export function attr<K extends string>(proto: Record<K, attrValue>, key: K): void {
-  meta(proto, attrKey).add(key)
-}
-
-/**
- * initializeAttrs is called with a set of class property names (if omitted, it
- * will look for any properties tagged with the `@attr` decorator). With this
- * list it defines property descriptors for each property that map to `data-*`
- * attributes on the HTMLElement instance.
- *
- * It works around Native Class Property semantics - which are equivalent to
- * calling `Object.defineProperty` on the instance upon creation, but before
- * `constructor()` is called.
- *
- * If a class property is assigned to the class body, it will infer the type
- * (using `typeof`) and define an appropriate getter/setter combo that aligns
- * to that type. This means class properties assigned to Numbers can only ever
- * be Numbers, assigned to Booleans can only ever be Booleans, and assigned to
- * Strings can only ever be Strings.
- *
- * This is automatically called as part of `@controller`. If a class uses the
- * `@controller` decorator it should not call this manually.
- */
-const initialized = new WeakSet<Element>()
-export function initializeAttrs(instance: HTMLElement, names?: Iterable<string>): void {
-  if (initialized.has(instance)) return
-  initialized.add(instance)
-  if (!names) names = meta(Object.getPrototypeOf(instance), attrKey)
-  for (const key of names) {
-    const value = (<Record<PropertyKey, unknown>>(<unknown>instance))[key]
-    const name = attrToAttributeName(key)
-    let descriptor: PropertyDescriptor = {
-      configurable: true,
-      get(this: HTMLElement): string {
-        return this.getAttribute(name) || ''
-      },
-      set(this: HTMLElement, newValue: string) {
-        this.setAttribute(name, newValue || '')
+const initial = Symbol()
+let setFromMutation = false
+const attrs = new WeakMap<Ability, Map<string, PropertyKey>>()
+const handleMutations = (mutations: MutationRecord[]) => {
+  for (const mutation of mutations) {
+    if (mutation.type === 'attributes') {
+      const name = mutation.attributeName!
+      const el = mutation.target as unknown as Ability
+      const key = attrs.get(el)?.get(name)
+      if (key) {
+        setFromMutation = true
+        ;(el as unknown as Record<PropertyKey, unknown>)[key] = el.hasAttribute(name) ? el.getAttribute(name) : initial
+        setFromMutation = false
       }
-    }
-    if (typeof value === 'number') {
-      descriptor = {
-        configurable: true,
-        get(this: HTMLElement): number {
-          return Number(this.getAttribute(name) || 0)
-        },
-        set(this: HTMLElement, newValue: string) {
-          this.setAttribute(name, newValue)
-        }
-      }
-    } else if (typeof value === 'boolean') {
-      descriptor = {
-        configurable: true,
-        get(this: HTMLElement): boolean {
-          return this.hasAttribute(name)
-        },
-        set(this: HTMLElement, newValue: boolean) {
-          this.toggleAttribute(name, newValue)
-        }
-      }
-    }
-    Object.defineProperty(instance, key, descriptor)
-    if (key in instance && !instance.hasAttribute(name)) {
-      descriptor.set!.call(instance, value)
     }
   }
 }
+const observer = new MutationObserver(handleMutations)
+const Identity = (v: unknown) => v
 
-const attrToAttributeName = (name: string) => `data-${dasherize(name)}`
+export const attrable = createAbility(
+  Class =>
+    class extends Class {
+      constructor() {
+        super()
+        const attributeNames = new Map<string, PropertyKey>()
+        attrs.set(this, attributeNames)
+        for (const key of getAttrs(this)) {
+          const name = mustDasherize(key)
+          attributeNames.set(name, key)
+          let cast: typeof Identity = null!
+          const descriptor = {
+            get: (value: unknown) => {
+              if (!cast) {
+                if (typeof value === 'number') {
+                  cast = Number
+                } else if (typeof value === 'boolean') {
+                  cast = Boolean
+                } else if (typeof value === 'string') {
+                  cast = String
+                } else {
+                  cast = Identity
+                }
+              }
+              const has = this.hasAttribute(name)
+              if (has) return cast === Boolean ? has : cast(this.getAttribute(name)!)
+              return cast(value)
+            },
+            set: (newValue: unknown) => {
+              newValue = newValue === initial ? initialValue : cast(newValue)
+              if (!setFromMutation) {
+                if (cast === Boolean) {
+                  this.toggleAttribute(name, newValue as boolean)
+                } else {
+                  this.setAttribute(name, newValue as string)
+                }
+              }
+              requestUpdate(this)
+              return newValue
+            }
+          }
+          const initialValue = observeProperty(this as Record<PropertyKey, unknown>, key, descriptor)
+        }
+        observer.observe(this, {attributeFilter: Array.from(attributeNames.keys())})
+      }
 
-export function defineObservedAttributes(classObject: CustomElementClass): void {
-  let observed = classObject.observedAttributes || []
-  Object.defineProperty(classObject, 'observedAttributes', {
-    configurable: true,
-    get() {
-      return [...meta(classObject.prototype, attrKey)].map(attrToAttributeName).concat(observed)
-    },
-    set(attributes: string[]) {
-      observed = attributes
+      connectedCallback() {
+        for (const key of getAttrs(this)) {
+          ;(this as unknown as Record<PropertyKey, unknown>)[key] = (this as unknown as Record<PropertyKey, unknown>)[
+            key
+          ]
+        }
+        super.connectedCallback?.()
+      }
     }
-  })
-}
+)

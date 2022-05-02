@@ -1,45 +1,40 @@
 import {expect, fixture, html} from '@open-wc/testing'
 import {replace, fake} from 'sinon'
-import {bind, listenForBind} from '../src/bind.js'
+import {Actionable} from '../src/action.js'
+import {use} from '../src/use.js'
 
-describe('bind', () => {
-  window.customElements.define(
-    'bind-test-element',
-    class extends HTMLElement {
-      foo = fake()
-      bar = fake()
-      handleEvent = fake()
-    }
-  )
+describe('Actionable', () => {
+  @use(Actionable)
+  class BindTestElement extends HTMLElement {
+    foo = fake()
+    bar = fake()
+    handleEvent = fake()
+  }
+  window.customElements.define('bind-test', BindTestElement)
 
   let instance
   beforeEach(async () => {
-    instance = await fixture(html`<bind-test-element />`)
+    instance = await fixture(html`<bind-test data-action="foo:bind-test#foo">
+      <div id="el1" data-action="click:bind-test#foo"></div>
+      <div id="el2" data-action="custom:event:bind-test#foo"></div>
+    </bind-test>`)
   })
 
   it('binds events on elements based on their data-action attribute', () => {
-    const el = document.createElement('div')
-    el.setAttribute('data-action', 'click:bind-test-element#foo')
-    instance.appendChild(el)
-    bind(instance)
     expect(instance.foo).to.have.callCount(0)
-    el.click()
+    instance.querySelector('#el1').click()
     expect(instance.foo).to.have.callCount(1)
   })
 
   it('allows for the presence of `:` in an event name', () => {
-    const el = document.createElement('div')
-    el.setAttribute('data-action', 'custom:event:bind-test-element#foo')
-    instance.appendChild(el)
-    bind(instance)
     expect(instance.foo).to.have.callCount(0)
-    el.dispatchEvent(new CustomEvent('custom:event'))
+    instance.querySelector('#el2').dispatchEvent(new CustomEvent('custom:event'))
     expect(instance.foo).to.have.callCount(1)
   })
 
   it('binds events on the controller to itself', () => {
     instance.setAttribute('data-action', 'click:bind-test-element#foo')
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     instance.click()
     expect(instance.foo).to.have.callCount(1)
@@ -50,7 +45,7 @@ describe('bind', () => {
     el.getAttribute('data-action', 'click:bind-test-element#foo')
     const container = document.createElement('div')
     container.append(instance, el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     el.click()
     expect(instance.foo).to.have.callCount(0)
   })
@@ -59,7 +54,7 @@ describe('bind', () => {
     const el = document.createElement('div')
     el.setAttribute('data-action', 'click:other-controller#foo')
     instance.appendChild(el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     el.click()
     expect(instance.foo).to.have.callCount(0)
@@ -69,7 +64,7 @@ describe('bind', () => {
     const el = document.createElement('div')
     el.setAttribute('data-action', 'click:bind-test-element#frob')
     instance.appendChild(el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     el.click()
     expect(instance.foo).to.have.callCount(0)
   })
@@ -78,7 +73,7 @@ describe('bind', () => {
     const el = document.createElement('div')
     el.setAttribute('data-action', 'click:bind-test-element#foo submit:bind-test-element#foo')
     instance.appendChild(el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     el.dispatchEvent(new CustomEvent('click'))
     expect(instance.foo).to.have.callCount(1)
@@ -92,7 +87,7 @@ describe('bind', () => {
     const el = document.createElement('div')
     el.setAttribute('data-action', 'click:bind-test-element submit:bind-test-element')
     instance.appendChild(el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.handleEvent).to.have.callCount(0)
     el.dispatchEvent(new CustomEvent('click'))
     expect(instance.handleEvent).to.have.callCount(1)
@@ -106,7 +101,7 @@ describe('bind', () => {
     const el = document.createElement('div')
     el.setAttribute('data-action', `click:bind-test-element#foo\nclick:bind-test-element#bar`)
     instance.appendChild(el)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     el.dispatchEvent(new CustomEvent('click'))
     expect(instance.foo).to.have.callCount(1)
@@ -121,7 +116,7 @@ describe('bind', () => {
     el1.setAttribute('data-action', 'click:bind-test-element#foo')
     el2.setAttribute('data-action', 'submit:bind-test-element#foo')
     instance.append(el1, el2)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     el1.click()
     expect(instance.foo).to.have.callCount(1)
@@ -136,7 +131,7 @@ describe('bind', () => {
     el2.setAttribute('data-action', 'submit:bind-test-element#foo')
     document.body.appendChild(instance)
 
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
 
     instance.append(el1, el2)
     // We need to wait for one microtask after injecting the HTML into to
@@ -152,13 +147,32 @@ describe('bind', () => {
   })
 
   it('can bind elements within the shadowDOM', () => {
-    instance.attachShadow({mode: 'open'})
+    const instance = document.createElement('bind-test-element')
+    replace(instance, 'foo', fake(instance.foo))
+    delegate.attachShadow(instance, instance.attachShadow.bind(instance), {mode: 'open'})
     const el1 = document.createElement('div')
     const el2 = document.createElement('div')
     el1.setAttribute('data-action', 'click:bind-test-element#foo')
     el2.setAttribute('data-action', 'submit:bind-test-element#foo')
     instance.shadowRoot.append(el1, el2)
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
+    expect(instance.foo).to.have.callCount(0)
+    el1.click()
+    expect(instance.foo).to.have.callCount(1)
+    el2.dispatchEvent(new CustomEvent('submit'))
+    expect(instance.foo).to.have.callCount(2)
+  })
+
+  it('can bind elements within a closed shadowDOM', () => {
+    const instance = document.createElement('bind-test-element')
+    replace(instance, 'foo', fake(instance.foo))
+    const shadowRoot = delegate.attachShadow(instance, instance.attachShadow.bind(instance), {mode: 'closed'})
+    const el1 = document.createElement('div')
+    const el2 = document.createElement('div')
+    el1.setAttribute('data-action', 'click:bind-test-element#foo')
+    el2.setAttribute('data-action', 'submit:bind-test-element#foo')
+    shadowRoot.append(el1, el2)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     el1.click()
     expect(instance.foo).to.have.callCount(1)
@@ -167,12 +181,14 @@ describe('bind', () => {
   })
 
   it('binds elements added to shadowDOM', async () => {
-    instance.attachShadow({mode: 'open'})
+    const instance = document.createElement('bind-test-element')
+    replace(instance, 'foo', fake(instance.foo))
+    delegate.attachShadow(instance, instance.attachShadow.bind(instance), {mode: 'open'})
     const el1 = document.createElement('div')
     const el2 = document.createElement('div')
     el1.setAttribute('data-action', 'click:bind-test-element#foo')
     el2.setAttribute('data-action', 'submit:bind-test-element#foo')
-    bind(instance)
+    delegate.connectedCallback(instance, () => {})
     instance.shadowRoot.append(el1)
     instance.shadowRoot.append(el2)
     // We need to wait for one microtask after injecting the HTML into to
@@ -186,9 +202,12 @@ describe('bind', () => {
   })
 
   describe('listenForBind', () => {
-    it('re-binds actions that are denoted by HTML that is dynamically injected into the controller', async () => {
-      bind(instance)
-      listenForBind(instance.ownerDocument)
+    it('re-binds actions that are denoted by HTML that is dynamically injected into the controller', async function () {
+      const instance = document.createElement('bind-test-element')
+      delegate.connectedCallback(instance, () => {})
+      replace(instance, 'foo', fake(instance.foo))
+      root.appendChild(instance)
+      listenForBind(root)
       const button = document.createElement('button')
       button.setAttribute('data-action', 'click:bind-test-element#foo')
       instance.appendChild(button)
@@ -236,7 +255,7 @@ describe('bind', () => {
         class BindTestNotController extends HTMLElement {
           foo = fake()
           connectedCallback() {
-            bind(this)
+            delegate.connectedCallback(this, () => {})
           }
         }
       )
@@ -253,10 +272,12 @@ describe('bind', () => {
     })
   })
 
-  it('re-binds actions deeply in the HTML', async () => {
-    instance = await fixture(html`<bind-test-element />`)
-    bind(instance)
-    listenForBind(instance.ownerDocument)
+  it('re-binds actions deeply in the HTML', async function () {
+    const instance = document.createElement('bind-test-element')
+    delegate.connectedCallback(instance, () => {})
+    replace(instance, 'foo', fake(instance.foo))
+    root.appendChild(instance)
+    listenForBind(root)
     instance.innerHTML = `
         <div>
           <div>
@@ -271,11 +292,13 @@ describe('bind', () => {
     expect(instance.foo).to.have.callCount(1)
   })
 
-  it('will not fire if the binding attribute is removed', async () => {
-    instance = await fixture(html`<bind-test-element>
-      <div data-action="click:bind-test-element#foo"></div>
-    </bind-test-element>`)
-    bind(instance)
+  it('will not fire if the binding attribute is removed', () => {
+    const instance = document.createElement('bind-test-element')
+    replace(instance, 'foo', fake(instance.foo))
+    const el1 = document.createElement('div')
+    el1.setAttribute('data-action', 'click:bind-test-element#foo')
+    instance.appendChild(el1)
+    delegate.connectedCallback(instance, () => {})
     expect(instance.foo).to.have.callCount(0)
     const el = instance.querySelector('div')
     el.click()
@@ -285,14 +308,17 @@ describe('bind', () => {
     expect(instance.foo).to.have.callCount(1)
   })
 
-  it('will rebind elements if the attribute changes', async () => {
-    instance = await fixture(html`<bind-test-element>
-      <button data="action" ="submit:bind-test-element#foo"></button>
-    </bind-test-element>`)
-    bind(instance)
-    listenForBind(instance.ownerDocument)
+  it('will rebind elements if the attribute changes', async function () {
+    const instance = document.createElement('bind-test-element')
+    replace(instance, 'foo', fake(instance.foo))
+    root.appendChild(instance)
+    let button = document.createElement('button')
+    button.setAttribute('data-action', 'submit:bind-test-element#foo')
+    instance.appendChild(button)
+    delegate.connectedCallback(instance, () => {})
+    listenForBind(root)
     await Promise.resolve()
-    const button = instance.querySelector('button')
+    button = instance.querySelector('button')
     button.click()
     expect(instance.foo).to.have.callCount(0)
     button.setAttribute('data-action', 'click:bind-test-element#foo')

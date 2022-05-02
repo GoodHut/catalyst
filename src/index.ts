@@ -1,7 +1,10 @@
-export {bind, listenForBind} from './bind.js'
+export {actionable} from './action.js'
+export {attr, attrable} from './attr.js'
+export {target, targets, targetable} from './target.js'
 export {register} from './register.js'
-export {findTarget, findTargets} from './findtarget.js'
-export {target, targets} from './target.js'
+
+export {createAbility, updateCallback, attachShadowCallback, attachInternalsCallback, requestUpdate} from './ability.js'
+
+export {createMark} from './mark.js'
+export {observeProperty} from './observe-property.js'
 export {controller} from './controller.js'
-export {attr, initializeAttrs, defineObservedAttributes} from './attr.js'
-export {autoShadowRoot} from './auto-shadow-root.js'
